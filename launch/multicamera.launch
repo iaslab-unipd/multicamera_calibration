@@ -1,0 +1,108 @@
+<launch>
+
+  <!-- Parameters possible to change-->
+  <arg name="num_cameras" value="3" />
+
+  <arg name="kinect_id1" value="A00364820345039A" />
+  <arg name="kinect_id2" value="A00364907959051A" />
+  <arg name="kinect_id3" value="A00367A01433047A" />
+  <arg name="logitech_device" value="/dev/video1" />
+  <arg name="philips_device" value="/dev/video0" />
+  
+  <arg name="rows" default="6" />
+  <arg name="cols" default="5" />
+  <arg name="cell_width" default="0.12" />
+  <arg name="cell_height" default="0.12" />
+  
+ <!-- Default parameters-->
+    <arg name="kinect_name1" default="kinect1" />
+    <arg name="kinect_name2" default="kinect2" />
+    <arg name="kinect_name3" default="kinect3" />
+    <arg name="asus_name" default="asus" />
+	<arg name="logitech_name" default="logitech" />
+	<arg name="philips_name" default="philips" />
+
+<!-- Openning Rviz for visualization-->
+	<node name="rviz" pkg="rviz" type="rviz" args="-d $(env HOME)/.rviz/multikinect.rviz"/>
+
+ <!-- Putting the time back to real time
+    <rosparam>
+       /use_sim_time: false
+    </rosparam>-->
+
+<!-- Launching asus 
+	<include file="$(find openni2_launch)/launch/openni2.launch">
+	    	<arg name="camera" value="$(arg asus_name)" />
+	    	<arg name="publish_tf" value="false" />
+	</include>-->
+
+<!-- Launching kinect -->
+	<include file="$(find freenect_launch)/launch/freenect.launch">
+		<arg name="device_id" value="$(arg kinect_id1)" />
+    	<arg name="camera" value="$(arg kinect_name1)" />
+    	<arg name="publish_tf" value="false" />
+	</include>
+
+<!-- Launching kinect -->
+	<include file="$(find freenect_launch)/launch/freenect.launch">
+		<arg name="device_id" value="$(arg kinect_id2)" />
+    	<arg name="camera" value="$(arg kinect_name2)" />
+    	<arg name="publish_tf" value="false" />
+	</include>
+
+<!-- Launching kinect -->
+	<include file="$(find freenect_launch)/launch/freenect.launch">
+		<arg name="device_id" value="$(arg kinect_id3)" />
+    	<arg name="camera" value="$(arg kinect_name3)" />
+    	<arg name="publish_tf" value="false" />
+	</include>
+
+	
+<!-- Launching logitech 
+	<node pkg="usb_cam" type="usb_cam_node" name="$(arg logitech_name)" output="screen">
+		<param name="video_device" value="$(arg logitech_device)" />
+		<param name="camera_name" value="$(arg logitech_name)" />
+		<param name="camera_frame_id" value="/$(arg logitech_name)" />
+		<param name="pixel_format" value="yuyv" />
+		<param name="image_width" value="640" />
+		<param name="image_height" value="480" />
+	</node>-->
+
+<!-- Launching philips 
+	<node pkg="usb_cam" type="usb_cam_node" name="$(arg philips_name)" output="screen">
+		<param name="video_device" value="$(arg philips_device)" />
+		<param name="camera_name" value="$(arg philips_name)" />
+		<param name="camera_frame_id" value="$(arg philips_name)" />
+		<param name="pixel_format" value="yuyv" />
+		<param name="image_width" value="1280" />
+		<param name="image_height" value="1024" />
+	</node>-->
+
+<!-- Launching calibration -->
+	<node pkg="multicamera_calibration" type="multicamera_calibration" name="multicamera_calibration" output="screen">
+	
+	  <param name="num_cameras" value="$(arg num_cameras)" />
+	  
+	  <param name="rows" value="$(arg rows)" />
+      <param name="cols" value="$(arg cols)" />
+      <param name="cell_width" value="$(arg cell_width)" />
+      <param name="cell_height" value="$(arg cell_height)" />
+      
+      <param name="camera_0/name" value="/$(arg kinect_name1)" />
+      <param name="camera_1/name" value="/$(arg kinect_name2)" />
+      <param name="camera_2/name" value="/$(arg kinect_name3)" />
+      <param name="camera_3/name" value="/$(arg philips_name)" />
+	  
+	  <remap from="~camera_0/image" to="/$(arg kinect_name1)/rgb/image_rect_color" />
+	  <remap from="~camera_1/image" to="/$(arg kinect_name2)/rgb/image_rect_color" />
+	  <remap from="~camera_2/image" to="/$(arg kinect_name3)/rgb/image_rect_color" />
+	  <remap from="~camera_3/image" to="/$(arg philips_name)/image_raw" />
+	  
+	  <remap from="~camera_0/camera_info" to="/$(arg kinect_name1)/rgb/camera_info" />
+	  <remap from="~camera_1/camera_info" to="/$(arg kinect_name2)/rgb/camera_info" />
+	  <remap from="~camera_2/camera_info" to="/$(arg kinect_name3)/rgb/camera_info" />
+	  <remap from="~camera_3/camera_info" to="/$(arg philips_name)/camera_info" />
+	  
+	</node>
+
+</launch>
