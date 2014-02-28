@@ -48,6 +48,7 @@
 #include <calibration_common/pinhole/pinhole.h>
 
 #include <geometry_msgs/Pose.h>
+#include <sstream>
 
 using namespace camera_info_manager;
 
@@ -103,9 +104,10 @@ public:
     sensor_vec_.push_back(sensor_node);
   }
 
-  void nextAcquisition()
+  size_t nextAcquisition()
   {
     view_vec_.push_back(ViewMap());
+    return view_vec_.size() - 1;
   }
 
   void addData(const PinholeSensor::Ptr & sensor,

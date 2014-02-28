@@ -123,11 +123,11 @@ void OnlineCalibrationNode::spin()
   {
     ros::spinOnce();
 
-    calibration_->nextAcquisition();
+    size_t n = calibration_->nextAcquisition();
 
-    for (int id = 0; id < num_sensors_; ++id)
+    for (int i = 0; i < num_sensors_; ++i)
     {
-      const SensorROS::Ptr & sensor = sensor_vec_[id];
+      const SensorROS::Ptr & sensor = sensor_vec_[i];
 
       if (not sensor->image_msg_)
         continue;
@@ -139,6 +139,11 @@ void OnlineCalibrationNode::spin()
                                                                   sensor_msgs::image_encodings::BGR8);
           calibration_->addData(sensor->sensor_, image_ptr->image);
           sensor->new_image_ = false;
+
+          std::stringstream image_file_name;
+          image_file_name << "/tmp/cam" << i << "_image"<< std::setw(4) << std::setfill('0') << n << ".png";
+          cv::imwrite(image_file_name.str(), image_ptr->image);
+
         }
       }
       catch (cv_bridge::Exception & ex)
