@@ -71,8 +71,8 @@ include_directories(include
 ## Declare a cpp library
 
 add_executable(multicamera_calibration
-  src/multicamera_calibration/multicamera_calibration.cpp
-  include/multicamera_calibration/multicamera_calibration.h
+  src/multicamera_calibration/multicamera_calibration.cpp  include/multicamera_calibration/multicamera_calibration.h
+  src/multicamera_calibration/online_calibration_node.cpp  include/multicamera_calibration/online_calibration_node.h
 )
 
 ## Add dependencies to the executable

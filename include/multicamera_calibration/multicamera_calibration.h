@@ -45,7 +45,7 @@
 #include <camera_info_manager/camera_info_manager.h>
 
 #include <calibration_common/algorithms/automatic_checkerboard_finder.h>
-#include <calibration_common/pinhole/camera_model.h>
+#include <calibration_common/pinhole/pinhole.h>
 
 #include <geometry_msgs/Pose.h>
 
@@ -54,52 +54,31 @@ using namespace camera_info_manager;
 namespace calibration
 {
 
-const int MAX_LEVEL = 10000;
-const double MAX_DISTANCE = 10000.0;
-const double MAX_ERROR = 10000.0;
-
-struct Camera
+struct SensorNode
 {
+  typedef boost::shared_ptr<SensorNode> Ptr;
+  typedef boost::shared_ptr<const SensorNode> ConstPtr;
 
-  Camera(int id,
-         const image_transport::Subscriber & image_sub,
-         const ros::Subscriber & camera_info_sub)
-    : id_(id),
-      image_sub_(image_sub),
-      camera_info_sub_(camera_info_sub),
-      level_(MAX_LEVEL),
+  static const int MAX_LEVEL;
+  static const double MAX_DISTANCE;
+  static const double MAX_ERROR;
+
+  SensorNode(const PinholeSensor::Ptr & sensor,
+             size_t id)
+    : level_(MAX_LEVEL),
       distance_(MAX_DISTANCE),
-      min_error_(MAX_ERROR)
+      min_error_(MAX_ERROR),
+      id_(id)
   {
-    std::stringstream ss;
-    ss << "/camera_" << id;
-    name_ = ss.str();
+    // Do nothing
   }
-
-  Camera(int id)
-    : id_(id),
-      level_(MAX_LEVEL),
-      distance_(MAX_DISTANCE),
-      min_error_(MAX_ERROR)
-  {
-    std::stringstream ss;
-    ss << "/camera_" << id;
-    name_ = ss.str();
-  }
-
-  int id_;
-  std::string name_;
-
-  image_transport::Subscriber image_sub_;
-  ros::Subscriber camera_info_sub_;
 
   PinholeSensor::Ptr sensor_;
   int level_;
   double distance_;
-
   double min_error_;
 
-  sensor_msgs::Image::ConstPtr image_msg_;
+  size_t id_;
 
 };
 
@@ -107,57 +86,80 @@ class MultiCameraCalibration
 {
 public:
 
-  MultiCameraCalibration(ros::NodeHandle & node_handle);
+  typedef boost::shared_ptr<MultiCameraCalibration> Ptr;
+  typedef boost::shared_ptr<const MultiCameraCalibration> ConstPtr;
 
-  void imageCallback(const sensor_msgs::Image::ConstPtr & msg,
-                     int id);
+  MultiCameraCalibration(const ros::NodeHandle & node_handle);
 
-  void cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr & msg,
-                          int id);
+  void setCheckerboard(const Checkerboard::Ptr & checkerboard)
+  {
+    checkerboard_ = checkerboard;
+  }
 
-  void actionCallback(const std_msgs::String::ConstPtr & msg);
+  void addSensor(const PinholeSensor::Ptr & sensor)
+  {
+    SensorNode::Ptr sensor_node = boost::make_shared<SensorNode>(sensor, sensor_map_.size());
+    sensor_map_[sensor] = sensor_node;
+    sensor_vec_.push_back(sensor_node);
+  }
 
-  bool initialize();
+  void nextAcquisition()
+  {
+    view_vec_.push_back(ViewMap());
+  }
 
-  void spin();
+  void addData(const PinholeSensor::Ptr & sensor,
+               const cv::Mat & image)
+  {
+    PinholeView<Checkerboard>::Ptr color_view;
 
-private:
+    SensorNode::Ptr & sensor_node = sensor_map_[sensor];
 
-  bool findCheckerboard(cv::Mat & image,
-                        int id,
-                        typename PinholeView<Checkerboard>::Ptr & color_view);
+    if (findCheckerboard(image, sensor, color_view))
+      view_vec_.back()[sensor_node] = color_view;
 
-  void optimize();
+    geometry_msgs::TransformStamped transform_msg;
+    if (sensor->toTF(transform_msg))
+      tf_pub_.sendTransform(transform_msg);
+
+  }
+
+  void perform();
 
   void saveTF();
   void saveTF2();
   void saveCameraAndFrames();
 
-  ros::NodeHandle node_handle_;
-  image_transport::ImageTransport image_transport_;
+private:
 
-  ros::Subscriber action_sub_;
-  std::vector<Camera> camera_vec_;
+  bool findCheckerboard(const cv::Mat & image,
+                        const PinholeSensor::Ptr & sensor,
+                        typename PinholeView<Checkerboard>::Ptr & color_view);
+
+  void optimize();
+
+  ros::NodeHandle node_handle_;
+
+  std::map<PinholeSensor::ConstPtr, SensorNode::Ptr> sensor_map_;
+  std::vector<SensorNode::Ptr> sensor_vec_;
   Checkerboard::Ptr checkerboard_;
 
   AutomaticCheckerboardFinder finder_;
 
-  int num_cameras_;
-
   BaseObject::Ptr world_;
 
-  tf::TransformListener tfListener;
+  tf::TransformListener tf_listener_;
 
   tf::TransformBroadcaster tf_pub_;
   ros::Publisher marker_pub_;
 
   bool world_set_;
 
-  typedef std::map<int, PinholeView<Checkerboard>::Ptr> DataMap;
-  std::vector<DataMap> data_vec_;
+  typedef std::map<SensorNode::Ptr, PinholeView<Checkerboard>::Ptr> ViewMap;
+  std::vector<ViewMap> view_vec_;
 
   bool initialization_;
-  bool stop_;
+  int last_optimization_;
 
 };
 

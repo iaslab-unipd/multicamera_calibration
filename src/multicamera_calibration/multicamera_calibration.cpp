@@ -37,159 +37,47 @@
 
 #include <ceres/ceres.h>
 
-#define OPTIMIZATION_COUNT 10;
+#define OPTIMIZATION_COUNT 10
 
 namespace calibration
 {
 
-MultiCameraCalibration::MultiCameraCalibration(ros::NodeHandle & node_handle)
+const int SensorNode::MAX_LEVEL = 10000;
+const double SensorNode::MAX_DISTANCE = 10000.0;
+const double SensorNode::MAX_ERROR = 10000.0;
+
+MultiCameraCalibration::MultiCameraCalibration(const ros::NodeHandle & node_handle)
   : node_handle_(node_handle),
-    image_transport_(node_handle),
     world_(boost::make_shared<BaseObject>()),
     world_set_(false),
-    stop_(false),
-    initialization_(true)
+    initialization_(true),
+    last_optimization_(0)
 {
   world_->setFrameId("/world");
-
-  action_sub_ = node_handle_.subscribe("action", 1, &MultiCameraCalibration::actionCallback, this);
-
-  node_handle_.param("num_cameras", num_cameras_, 0);
-
-  double cell_width, cell_height;
-  int rows, cols;
-
-  node_handle_.param("cell_width", cell_width, 1.0);
-  node_handle_.param("cell_height", cell_height, 2.0);
-  node_handle_.param("rows", rows, 3);
-  node_handle_.param("cols", cols, 4);
-
-  checkerboard_ = boost::make_shared<Checkerboard>(rows, cols, cell_width, cell_height);
-  checkerboard_->setFrameId("/checkerboard");
-
-  for (int id = 0; id < num_cameras_; ++id)
-  {
-    Camera camera(id);
-
-    std::stringstream ss;
-    ss << "camera_" << id << "/image";
-    camera.image_sub_ = image_transport_.subscribe(ss.str(),
-                                                   1,
-                                                   boost::bind(&MultiCameraCalibration::imageCallback, this, _1, id));
-
-    ss.str("");
-    ss << "camera_" << id << "/camera_info";
-    camera.camera_info_sub_ =
-      node_handle_.subscribe<sensor_msgs::CameraInfo>(ss.str(),
-                                                      1,
-                                                      boost::bind(&MultiCameraCalibration::cameraInfoCallback,
-                                                                  this,
-                                                                  _1,
-                                                                  id));
-
-    std::string name;
-    ss.str("");
-    ss << "camera_" << id << "/name";
-    if (node_handle_.getParam(ss.str(), name))
-      camera.name_ = name;
-
-    camera_vec_.push_back(camera);
-  }
-
   marker_pub_ = node_handle_.advertise<visualization_msgs::Marker>("markers", 0);
-
 }
 
-bool MultiCameraCalibration::initialize()
-{
-  return true;
-}
-
-void MultiCameraCalibration::imageCallback(const sensor_msgs::Image::ConstPtr & msg,
-                                           int id)
-{
-  camera_vec_[id].image_msg_ = msg;
-}
-
-void MultiCameraCalibration::cameraInfoCallback(const sensor_msgs::CameraInfo::ConstPtr & msg,
-                                                int id)
-{
-  Camera & camera = camera_vec_[id];
-  if (not camera.sensor_)
-  {
-//    std::stringstream ss;
-//    ss << "/camera_" << id;
-    PinholeCameraModel::ConstPtr cm(new PinholeCameraModel(*msg));
-    camera.sensor_ = boost::make_shared<PinholeSensor>();
-    camera.sensor_->setCameraModel(cm);
-//    camera.sensor_->setFrameId(ss.str());
-    camera.sensor_->setFrameId(camera.name_);
-  }
-}
-
-void MultiCameraCalibration::actionCallback(const std_msgs::String::ConstPtr & msg)
-{
-  if (msg->data == "save")
-  {
-    for (int id = 0; id < num_cameras_; ++id)
-    {
-      if (camera_vec_[id].level_ == MAX_LEVEL)
-      {
-        ROS_WARN("Not all camera poses estimated!!! File not saved!!!");
-        return;
-      }
-    }
-    saveTF();
-  }
-  else if (msg->data == "saveCam2WorldPose")
-  {
-    for (int id = 0; id < num_cameras_; ++id)
-    {
-      if (camera_vec_[id].level_ == MAX_LEVEL)
-      {
-        ROS_WARN("Not all camera poses estimated!!! File not saved!!!");
-        return;
-      }
-      else
-      {
-        ROS_INFO("Saving...");
-      }
-    }
-    saveCameraAndFrames();
-  }
-  else if (msg->data == "stop")
-  {
-    stop_ = true;
-    ROS_INFO("Optimizing...");
-    optimize();
-//    ROS_INFO("Saving...");
-//    saveTF();
-//    saveCameraAndFrames();
-  }
-}
-
-bool MultiCameraCalibration::findCheckerboard(cv::Mat & image,
-                                              int id,
+bool MultiCameraCalibration::findCheckerboard(const cv::Mat & image,
+                                              const PinholeSensor::Ptr & sensor,
                                               typename PinholeView<Checkerboard>::Ptr & color_view)
 {
+  const SensorNode::Ptr & sensor_node = sensor_map_[sensor];
+
   Types::Point2Matrix corners(checkerboard_->rows(), checkerboard_->cols());
   finder_.setImage(image);
   if (finder_.find(*checkerboard_, corners))
   {
-    std::stringstream ss;
-    ss << id;
-
     color_view = boost::make_shared<PinholeView<Checkerboard> >();
-    color_view->setId(ss.str());
+    color_view->setId(sensor->frameId());
     color_view->setObject(checkerboard_);
     color_view->setPoints(corners);
-    color_view->setSensor(camera_vec_[id].sensor_);
+    color_view->setSensor(sensor);
 
     Checkerboard checkerboard(*color_view);
 
     visualization_msgs::Marker checkerboard_marker;
     checkerboard_marker.ns = "checkerboard";
-    checkerboard_marker.id = id;
+    checkerboard_marker.id = sensor_node->id_;
 
     checkerboard.toMarker(checkerboard_marker);
     marker_pub_.publish(checkerboard_marker);
@@ -203,199 +91,96 @@ bool MultiCameraCalibration::findCheckerboard(cv::Mat & image,
   return false;
 }
 
-void MultiCameraCalibration::spin()
+void MultiCameraCalibration::perform()
 {
-  ros::Rate rate(2.0);
-  int last_optimization_ = 0;
+  const ViewMap & view_map = view_vec_.back();
 
-  while (not stop_ and ros::ok())
+  if (initialization_)
   {
-    ros::spinOnce();
-
-    DataMap view_map;
-
-    if (initialization_)
+    if (not world_set_ and not view_map.empty()) // Set /world
     {
-      for (int id = 0; id < num_cameras_; ++id)
+      SensorNode::Ptr sensor_node = view_map.begin()->first;
+      sensor_node->sensor_->setParent(world_);
+      sensor_node->level_ = 0;
+      world_set_ = true;
+    }
+
+    if (view_map.size() < 2)
+    {
+      view_vec_.resize(view_vec_.size() - 1); // Remove data
+    }
+    else // At least 2 cameras
+    {
+      int min_level = SensorNode::MAX_LEVEL;
+      SensorNode::Ptr min_sensor_node;
+      for (ViewMap::const_iterator it = view_map.begin(); it != view_map.end(); ++it)
       {
-        const Camera & camera = camera_vec_[id];
-
-        if (not camera.image_msg_)
-          continue;
-        try
+        SensorNode::Ptr sensor_node = it->first;
+        if (sensor_node->level_ < min_level)
         {
-          cv_bridge::CvImage::Ptr image_ptr = cv_bridge::toCvCopy(camera.image_msg_,
-                                                                  sensor_msgs::image_encodings::BGR8);
-          PinholeView<Checkerboard>::Ptr color_view;
-
-          if (findCheckerboard(image_ptr->image, id, color_view))
-            view_map[id] = color_view;
-
-          geometry_msgs::TransformStamped transform_msg;
-          if (camera.sensor_->toTF(transform_msg))
-            tf_pub_.sendTransform(transform_msg);
-
-        }
-        catch (cv_bridge::Exception & ex)
-        {
-          ROS_ERROR("cv_bridge exception: %s", ex.what());
-          return;
+          min_level = sensor_node->level_;
+          min_sensor_node = sensor_node;
         }
       }
 
-      if (not world_set_ and view_map.size() > 0) // Set /world
+      if (min_level < SensorNode::MAX_LEVEL) // At least one already in tree
       {
-        for (int id = 0; id < num_cameras_; ++id)
+        for (ViewMap::const_iterator it = view_map.begin(); it != view_map.end(); ++it)
         {
-          Camera & camera = camera_vec_[id];
-          if (view_map.find(id) != view_map.end())
+          SensorNode::Ptr sensor_node = it->first;
+          if (sensor_node != min_sensor_node)
           {
-            camera.sensor_->setParent(world_);
-            camera.level_ = 0;
-            world_set_ = true;
-            break;
-          }
-        }
-      }
+            Checkerboard checkerboard(*it->second);
+            double camera_error = std::abs(checkerboard.plane().normal().dot(Types::Vector3::UnitZ()))
+              * checkerboard.center().squaredNorm();
 
-      if (view_map.size() > 1) // At least 2 cameras
-      {
-        data_vec_.push_back(view_map);
-
-        int min_level = MAX_LEVEL;
-        int min_id;
-        for (int id = 0; id < num_cameras_; ++id)
-        {
-          const Camera & camera = camera_vec_[id];
-          if (view_map.find(id) != view_map.end())
-          {
-            if (camera.level_ < min_level)
+            if (sensor_node->level_ > min_level and camera_error < sensor_node->min_error_)
             {
-              min_level = camera.level_;
-              min_id = id;
-            }
-          }
-        }
+              Checkerboard min_checkerboard(*view_map.at(min_sensor_node));
 
-        if (min_level < MAX_LEVEL) // At least one already in tree
-        {
-          for (int id = 0; id < num_cameras_; ++id)
-          {
-            Camera & camera = camera_vec_[id];
-            const Camera & min_camera = camera_vec_[min_id];
+              double distance = (min_checkerboard.center() - checkerboard.center()).norm();
 
-            if (id != min_id and view_map.find(id) != view_map.end())
-            {
+              sensor_node->sensor_->setParent(min_sensor_node->sensor_);
+              sensor_node->sensor_->setPose(min_checkerboard.pose() * checkerboard.pose().inverse());
 
-              Checkerboard checkerboard(*view_map[id]);
-              double camera_error = std::abs(checkerboard.plane().normal().dot(Types::Vector3::UnitZ()))
-                * checkerboard.center().squaredNorm();
-
-              if (camera.level_ > min_level and camera_error < camera.min_error_)
-              {
-                Checkerboard min_checkerboard(*view_map[min_id]);
-
-                double distance = (min_checkerboard.center() - checkerboard.center()).norm();
-
-                camera.sensor_->setParent(min_camera.sensor_);
-                camera.sensor_->setPose(min_checkerboard.pose() * checkerboard.pose().inverse());
-
-                camera.min_error_ = camera_error;
-                camera.distance_ = distance;
-                camera.level_ = min_level + 1;
-              }
+              sensor_node->min_error_ = camera_error;
+              sensor_node->distance_ = distance;
+              sensor_node->level_ = min_level + 1;
             }
           }
         }
 
       }
 
-      initialization_ = (data_vec_.size() < 20);
-      for (int id = 0; id < num_cameras_; ++id)
+      initialization_ = (view_vec_.size() < 20);
+      for (ViewMap::const_iterator it = view_map.begin(); it != view_map.end(); ++it)
       {
-        const Camera & camera = camera_vec_[id];
-        if (camera.level_ == MAX_LEVEL)
+        SensorNode::Ptr sensor_node = it->first;
+        if (sensor_node->level_ == SensorNode::MAX_LEVEL)
         {
           initialization_ = true;
           break;
         }
       }
     }
-    else
-    {
-      for (int id = 0; id < num_cameras_; ++id)
-      {
-        const Camera & camera = camera_vec_[id];
-
-        if (not camera.image_msg_)
-          continue;
-        try
-        {
-          cv_bridge::CvImage::Ptr image_ptr = cv_bridge::toCvCopy(camera.image_msg_,
-                                                                  sensor_msgs::image_encodings::BGR8);
-          PinholeView<Checkerboard>::Ptr color_view;
-
-          if (findCheckerboard(image_ptr->image, id, color_view))
-            view_map[id] = color_view;
-
-          geometry_msgs::TransformStamped transform_msg;
-          if (camera.sensor_->toTF(transform_msg))
-            tf_pub_.sendTransform(transform_msg);
-
-        }
-        catch (cv_bridge::Exception & ex)
-        {
-          ROS_ERROR("cv_bridge exception: %s", ex.what());
-          return;
-        }
-      }
-
-      if (view_map.size() > 1) // At least 2 cameras
-      {
-        data_vec_.push_back(view_map);
-        if (last_optimization_ == 0)
-        {
-          optimize();
-          last_optimization_ = OPTIMIZATION_COUNT;
-        }
-        else
-          last_optimization_--;
-      }
-
-    }
-    rate.sleep();
   }
-
-  while (ros::ok())
+  else
   {
-    ros::spinOnce();
-
-    for (int id = 0; id < num_cameras_; ++id)
+    if (view_map.size() < 2)
     {
-      const Camera & camera = camera_vec_[id];
-
-      if (not camera.image_msg_)
-        continue;
-      try
+      view_vec_.resize(view_vec_.size() - 1); // Remove data
+    }
+    else // At least 2 cameras
+    {
+      if (last_optimization_ == 0)
       {
-        cv_bridge::CvImage::Ptr image_ptr = cv_bridge::toCvCopy(camera.image_msg_, sensor_msgs::image_encodings::BGR8);
-        PinholeView<Checkerboard>::Ptr color_view;
-
-        findCheckerboard(image_ptr->image, id, color_view);
-
-        geometry_msgs::TransformStamped transform_msg;
-        if (camera.sensor_->toTF(transform_msg))
-          tf_pub_.sendTransform(transform_msg);
-
+        optimize();
+        last_optimization_ = OPTIMIZATION_COUNT;
       }
-      catch (cv_bridge::Exception & ex)
-      {
-        ROS_ERROR("cv_bridge exception: %s", ex.what());
-        return;
-      }
+      else
+        last_optimization_--;
     }
 
-    rate.sleep();
   }
 
 }
@@ -500,35 +285,34 @@ void MultiCameraCalibration::optimize()
 {
 
   ceres::Problem problem;
-  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> cb_data(data_vec_.size(), 6);
-  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> camera_data(camera_vec_.size(),
+  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> cb_data(view_vec_.size(), 6);
+  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> sensor_data(sensor_vec_.size(),
                                                                                                   6);
-  for (size_t i = 0; i < camera_vec_.size(); ++i)
+  for (size_t i = 0; i < sensor_vec_.size(); ++i)
   {
-    const Camera & camera = camera_vec_[i];
-    Types::Pose pose = camera.sensor_->pose();
-    BaseObject::ConstPtr parent = camera.sensor_->parent();
+    const SensorNode & sensor_node = *sensor_vec_[i];
+    Types::Pose pose = sensor_node.sensor_->pose();
+    BaseObject::ConstPtr parent = sensor_node.sensor_->parent();
     while (parent)
     {
-      camera.sensor_->setParent(parent);
+      sensor_node.sensor_->setParent(parent);
       pose = parent->pose() * pose; //TODO controllare
       parent = parent->parent();
     }
 
     Types::AngleAxis rotation = Types::AngleAxis(pose.linear());
-    camera_data.row(i).head<3>() = rotation.angle() * rotation.axis();
-    camera_data.row(i).tail<3>() = pose.translation();
+    sensor_data.row(i).head<3>() = rotation.angle() * rotation.axis();
+    sensor_data.row(i).tail<3>() = pose.translation();
   }
 
-  for (size_t i = 0; i < data_vec_.size(); ++i)
+  for (size_t i = 0; i < view_vec_.size(); ++i)
   {
-    DataMap & data_map = data_vec_[i];
-    DataMap::iterator it = data_map.begin(); //TODO prendere la migliore e non la prima
-    const int id = it->first;
+    ViewMap & data_map = view_vec_[i];
+    ViewMap::iterator it = data_map.begin(); //TODO prendere la migliore e non la prima
     const PinholeView<Checkerboard>::Ptr & view = it->second;
-    const Camera & camera = camera_vec_[id];
-    Types::Pose pose = camera.sensor_->cameraModel()->estimatePose(view->points(), view->object()->points());
-    BaseObject::ConstPtr parent = camera.sensor_;
+    const SensorNode::Ptr & sensor_node = it->first;
+    Types::Pose pose = sensor_node->sensor_->cameraModel()->estimatePose(view->points(), view->object()->points());
+    BaseObject::ConstPtr parent = sensor_node->sensor_;
     while (parent)
     {
       pose = parent->pose() * pose; //TODO controllare
@@ -539,24 +323,23 @@ void MultiCameraCalibration::optimize()
     cb_data.row(i).head<3>() = rotation.angle() * rotation.axis();
     cb_data.row(i).tail<3>() = pose.translation();
 
-    for (DataMap::iterator it = data_map.begin(); it != data_map.end(); ++it)
+    for (ViewMap::iterator it = data_map.begin(); it != data_map.end(); ++it)
     {
-      const int id = it->first;
       PinholeView<Checkerboard>::Ptr & view = it->second;
-      const Camera & camera = camera_vec_[id];
+      const SensorNode::Ptr & sensor_node = it->first;
 
-      if (camera.level_ > 0)
+      if (sensor_node->level_ > 0)
       {
-        GlobalError * error = new GlobalError(camera.sensor_->cameraModel(), view->object(), view->points());
+        GlobalError * error = new GlobalError(sensor_node->sensor_->cameraModel(), view->object(), view->points());
 
         typedef ceres::AutoDiffCostFunction<GlobalError, ceres::DYNAMIC, 6, 6> GlobalErrorFunction;
 
         ceres::CostFunction * cost_function = new GlobalErrorFunction(error, checkerboard_->size());
-        problem.AddResidualBlock(cost_function, NULL, camera_data.row(id).data(), cb_data.row(i).data());
+        problem.AddResidualBlock(cost_function, NULL, sensor_data.row(sensor_node->id_).data(), cb_data.row(i).data());
       }
       else
       {
-        CheckerboardError * error = new CheckerboardError(camera.sensor_->cameraModel(),
+        CheckerboardError * error = new CheckerboardError(sensor_node->sensor_->cameraModel(),
                                                           view->object(),
                                                           view->points());
 
@@ -577,20 +360,20 @@ void MultiCameraCalibration::optimize()
 
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
-  for (size_t i = 0; i < camera_vec_.size(); ++i)
+  for (size_t i = 0; i < sensor_vec_.size(); ++i)
   {
-    std::cout << i << ": " << camera_data.row(i) << std::endl;
-    Camera & camera = camera_vec_[i];
-    if (camera_data.row(i).head<3>().norm() != 0)
+    std::cout << i << ": " << sensor_data.row(i) << std::endl;
+    SensorNode::Ptr & sensor_node = sensor_vec_[i];
+    if (sensor_data.row(i).head<3>().norm() != 0)
     {
-      Types::AngleAxis rotation(camera_data.row(i).head<3>().norm(), camera_data.row(i).head<3>().normalized());
-      Types::Translation3 translation(camera_data.row(i).tail<3>());
-      camera.sensor_->setPose(translation * rotation);
+      Types::AngleAxis rotation(sensor_data.row(i).head<3>().norm(), sensor_data.row(i).head<3>().normalized());
+      Types::Translation3 translation(sensor_data.row(i).tail<3>());
+      sensor_node->sensor_->setPose(translation * rotation);
     }
     else
     {
-      Types::Translation3 translation(camera_data.row(i).tail<3>());
-      camera.sensor_->setPose(Types::Pose::Identity() * translation);
+      Types::Translation3 translation(sensor_data.row(i).tail<3>());
+      sensor_node->sensor_->setPose(Types::Pose::Identity() * translation);
     }
   }
 }
@@ -612,7 +395,7 @@ void MultiCameraCalibration::saveTF2()
                 << "<arg name=\"kinect_id\" value=\"A00367A01433047A\" />" << std::endl
                 << "<arg name=\"period\" default=\"10\" />" << std::endl << std::endl;
 
-    for (int id = 0; id < num_cameras_; ++id)
+    for (size_t id = 0; id < sensor_vec_.size(); ++id)
     {
       //const Types::Pose & pose = camera_vector_[id].sensor_->pose();
       //const Types::Pose& pose = checkerboard_->
@@ -622,10 +405,10 @@ void MultiCameraCalibration::saveTF2()
       ss << id;
       frame << "_depth_optical_frame";
 
-      tfListener.lookupTransform("checkerboard_" + ss.str(),
-                                 camera_vec_[id].sensor_->frameId(),
-                                 ros::Time(0),
-                                 transform);
+      tf_listener_.lookupTransform("checkerboard_" + ss.str(),
+                                   sensor_vec_[id]->sensor_->frameId(),
+                                   ros::Time(0),
+                                   transform);
       //tf_listener.lookUpTransform("checkerboard_"+id, camera_vector_[id].sensor_->parent()->frameId(), ros::Time(0), transform);
 
       //ROS_INFO("Trasformata fra %20s e %20s: ", "checkerboard_"+ss.str(), camera_vector_[id].sensor_->frameId());
@@ -656,10 +439,10 @@ void MultiCameraCalibration::saveTF2()
       transform_final = transform;
 
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << camera_vec_[id].sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
+      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
       << " " << transform_final.getOrigin().y() << " " << transform_final.getOrigin().z() << " "
       << transform_final.getRotation().x() << " " << transform_final.getRotation().y() << " "
-      << transform_final.getRotation().z() << " " << "checkerboard_" << id << " " << camera_vec_[id].sensor_->frameId()
+      << transform_final.getRotation().z() << " " << "checkerboard_" << id << " " << sensor_vec_[id]->sensor_->frameId()
       << " 100\" />\n\n";
 
     }
@@ -688,6 +471,15 @@ void MultiCameraCalibration::saveTF2()
 
 void MultiCameraCalibration::saveCameraAndFrames()
 {
+  for (size_t id = 0; id < sensor_vec_.size(); ++id)
+  {
+    if (sensor_vec_[id]->level_ == SensorNode::MAX_LEVEL)
+    {
+      ROS_WARN("Not all camera poses estimated!!! File not saved!!!");
+      return;
+    }
+  }
+
 //save tf between camera and world coordinate system ( chessboard ) to set_transformations.launch file
   std::string file_name = ros::package::getPath("multicamera_calibration") + "/launch/cameras_and_frames.launch";
   std::ofstream launch_file;
@@ -710,7 +502,7 @@ void MultiCameraCalibration::saveCameraAndFrames()
                 << " <arg name=\"kinect_id\" value=\"A00367A01433047A\" />" << std::endl
                 << " <arg name=\"period\" default=\"10\" />" << std::endl << std::endl;
 
-    for (int id = 0; id < num_cameras_; ++id)
+    for (size_t id = 0; id < sensor_vec_.size(); ++id)
     {
       //const Types::Pose & pose = camera_vector_[id].sensor_->pose();
       //const Types::Pose& pose = checkerboard_->
@@ -747,10 +539,10 @@ void MultiCameraCalibration::saveCameraAndFrames()
        */
 
       //CERCO LA POSIZIONE RELATIVA FRA OPTICAL FRAME E SCACCHIERA
-      tfListener.lookupTransform("checkerboard_" + ss.str(),
-                                 camera_vec_[id].sensor_->frameId() + (optical_frame_string.str()),
-                                 ros::Time(0),
-                                 transform);
+      tf_listener_.lookupTransform("checkerboard_" + ss.str(),
+                                   sensor_vec_[id]->sensor_->frameId() + (optical_frame_string.str()),
+                                   ros::Time(0),
+                                   transform);
 
       tf::Matrix3x3 temp_rotation;
       temp_rotation.setRPY(M_PI, 0, -M_PI / 2);
@@ -768,22 +560,22 @@ void MultiCameraCalibration::saveCameraAndFrames()
 
       //DICHIARO LA POSIZIONE RELATIVA FRA CAMERA E SCACCHIERA
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << camera_vec_[id].sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
+      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
       << " " << transform_final.getOrigin().y() << " " << transform_final.getOrigin().z() << " " << yaw << " " << pitch
-      << " " << roll << " " << "world" << " " << camera_vec_[id].sensor_->frameId() << " 100\" />\n\n";
+      << " " << roll << " " << "world" << " " << sensor_vec_[id]->sensor_->frameId() << " 100\" />\n\n";
 
       //CERCO LA POSIZIONE RELATIVA FRA GLI ALBERI: ASUS_FRAME E ASUSX_LINK ( CHE DOVREBBE ESERE ZERO )
-      tfListener.lookupTransform(camera_vec_[id].sensor_->frameId() + (optical_frame_string.str()),
-                                 camera_vec_[id].sensor_->frameId() + (link_string.str()),
-                                 ros::Time(0),
-                                 link_transform);
+      tf_listener_.lookupTransform(sensor_vec_[id]->sensor_->frameId() + (optical_frame_string.str()),
+                                   sensor_vec_[id]->sensor_->frameId() + (link_string.str()),
+                                   ros::Time(0),
+                                   link_transform);
 
       //DICHIARO LA POSIZIONE RELATIVA FRA
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << camera_vec_[id].sensor_->frameId().substr(1) << "_broadcaster2\" args=\" -0.045 0 0 "
+      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster2\" args=\" -0.045 0 0 "
       //<< link_transform.getRotation().x() << " " << link_transform.getRotation().y() << " " << link_transform.getRotation().z() << " "
-      << "1.57 -1.57 0 " << camera_vec_[id].sensor_->frameId() << " "
-      << camera_vec_[id].sensor_->frameId() + link_string.str() << " 100\" />\n\n";
+      << "1.57 -1.57 0 " << sensor_vec_[id]->sensor_->frameId() << " "
+      << sensor_vec_[id]->sensor_->frameId() + link_string.str() << " 100\" />\n\n";
     }
 
     /*
@@ -824,6 +616,15 @@ void MultiCameraCalibration::saveCameraAndFrames()
 
 void MultiCameraCalibration::saveTF()
 {
+  for (size_t i = 0; i < sensor_vec_.size(); ++i)
+  {
+    if (sensor_vec_[i]->level_ == SensorNode::MAX_LEVEL)
+    {
+      ROS_WARN("Not all camera poses estimated!!! File not saved!!!");
+      return;
+    }
+  }
+
 //save tf to set_transformations.launch file
   std::string file_name = ros::package::getPath("multicamera_calibration") + "/launch/frames.launch";
   std::ofstream launch_file;
@@ -832,14 +633,14 @@ void MultiCameraCalibration::saveTF()
   {
     launch_file << "<launch>" << std::endl << std::endl;
 
-    for (int id = 0; id < num_cameras_; ++id)
+    for (size_t i = 0; i < sensor_vec_.size(); ++i)
     {
-      const Types::Pose & pose = camera_vec_[id].sensor_->pose();
+      const Types::Pose & pose = sensor_vec_[i]->sensor_->pose();
       Types::Quaternion q(pose.linear());
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << camera_vec_[id].sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << pose.translation().transpose()
-      << " " << q.coeffs().transpose() << " " << camera_vec_[id].sensor_->parent()->frameId() << " "
-      << camera_vec_[id].sensor_->frameId() << " 100\" />\n\n";
+      << sensor_vec_[i]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << pose.translation().transpose()
+      << " " << q.coeffs().transpose() << " " << sensor_vec_[i]->sensor_->parent()->frameId() << " "
+      << sensor_vec_[i]->sensor_->frameId() << " 100\" />\n\n";
     }
     launch_file << "</launch>" << std::endl;
   }
@@ -848,27 +649,3 @@ void MultiCameraCalibration::saveTF()
 }
 
 } /* namespace calibration */
-
-using namespace calibration;
-
-int main(int argc,
-         char ** argv)
-{
-  ros::init(argc, argv, "multicamera_calibration");
-  ros::NodeHandle node_handle("~");
-
-  try
-  {
-    MultiCameraCalibration calib_node(node_handle);
-    if (not calib_node.initialize())
-      return 0;
-    calib_node.spin();
-  }
-  catch (std::runtime_error & error)
-  {
-    ROS_FATAL("Calibration error: %s", error.what());
-    return 1;
-  }
-
-  return 0;
-}
