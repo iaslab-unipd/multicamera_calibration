@@ -42,7 +42,6 @@
 #include <calibration_common/calibration_common.h>
 #include <camera_info_manager/camera_info_manager.h>
 
-#include <calibration_common/algorithms/automatic_checkerboard_finder.h>
 #include <multicamera_calibration/multicamera_calibration.h>
 
 using namespace camera_info_manager;

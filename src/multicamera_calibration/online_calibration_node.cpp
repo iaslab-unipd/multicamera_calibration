@@ -48,7 +48,7 @@ OnlineCalibrationNode::OnlineCalibrationNode(const ros::NodeHandle & node_handle
 {
   action_sub_ = node_handle_.subscribe("action", 1, &OnlineCalibrationNode::actionCallback, this);
 
-  node_handle_.param("num_cameras", num_sensors_, 0); // TODO change parameter name
+  node_handle_.param("num_sensors", num_sensors_, 0);
 
   double cell_width, cell_height;
   int rows, cols;
@@ -94,6 +94,23 @@ OnlineCalibrationNode::OnlineCalibrationNode(const ros::NodeHandle & node_handle
 
 bool OnlineCalibrationNode::initialize()
 {
+  bool all_messages_received = false;
+  ros::Rate rate(1.0);
+  while (ros::ok() and not all_messages_received)
+  {
+    all_messages_received = true;
+    for (size_t i = 0; i < sensor_vec_.size(); ++i)
+    {
+      if (sensor_vec_[i]->sensor_)
+      {
+        ROS_WARN("Not all messages received. Waiting...");
+        all_messages_received = false;
+        break;
+      }
+    }
+    rate.sleep();
+  }
+
   calibration_ = boost::make_shared<MultiCameraCalibration>(node_handle_);
   calibration_->setCheckerboard(checkerboard_);
 

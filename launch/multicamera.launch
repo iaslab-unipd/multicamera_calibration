@@ -1,7 +1,7 @@
 <launch>
 
   <!-- Parameters possible to change-->
-  <arg name="num_cameras" value="3" />
+  <arg name="num_sensors" value="3" />
 
   <arg name="kinect_id1" value="A00364820345039A" />
   <arg name="kinect_id2" value="A00364907959051A" />
@@ -81,7 +81,7 @@
 <!-- Launching calibration -->
 	<node pkg="multicamera_calibration" type="multicamera_calibration" name="multicamera_calibration" output="screen">
 	
-	  <param name="num_cameras" value="$(arg num_cameras)" />
+	  <param name="num_sensors" value="$(arg num_sensors)" />
 	  
 	  <param name="rows" value="$(arg rows)" />
       <param name="cols" value="$(arg cols)" />
