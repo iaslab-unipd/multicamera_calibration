@@ -88,20 +88,20 @@
       <param name="cell_width" value="$(arg cell_width)" />
       <param name="cell_height" value="$(arg cell_height)" />
       
-      <param name="camera_0/name" value="/$(arg kinect_name1)" />
-      <param name="camera_1/name" value="/$(arg kinect_name2)" />
-      <param name="camera_2/name" value="/$(arg kinect_name3)" />
-      <param name="camera_3/name" value="/$(arg philips_name)" />
+      <param name="sensor_0/name" value="/$(arg kinect_name1)" />
+      <param name="sensor_1/name" value="/$(arg kinect_name2)" />
+      <param name="sensor_2/name" value="/$(arg kinect_name3)" />
+      <param name="sensor_3/name" value="/$(arg philips_name)" />
 	  
-	  <remap from="~camera_0/image" to="/$(arg kinect_name1)/rgb/image_rect_color" />
-	  <remap from="~camera_1/image" to="/$(arg kinect_name2)/rgb/image_rect_color" />
-	  <remap from="~camera_2/image" to="/$(arg kinect_name3)/rgb/image_rect_color" />
-	  <remap from="~camera_3/image" to="/$(arg philips_name)/image_raw" />
+	  <remap from="~sensor_0/image" to="/$(arg kinect_name1)/rgb/image_rect_color" />
+	  <remap from="~sensor_1/image" to="/$(arg kinect_name2)/rgb/image_rect_color" />
+	  <remap from="~sensor_2/image" to="/$(arg kinect_name3)/rgb/image_rect_color" />
+	  <remap from="~sensor_3/image" to="/$(arg philips_name)/image_raw" />
 	  
-	  <remap from="~camera_0/camera_info" to="/$(arg kinect_name1)/rgb/camera_info" />
-	  <remap from="~camera_1/camera_info" to="/$(arg kinect_name2)/rgb/camera_info" />
-	  <remap from="~camera_2/camera_info" to="/$(arg kinect_name3)/rgb/camera_info" />
-	  <remap from="~camera_3/camera_info" to="/$(arg philips_name)/camera_info" />
+	  <remap from="~sensor_0/camera_info" to="/$(arg kinect_name1)/rgb/camera_info" />
+	  <remap from="~sensor_1/camera_info" to="/$(arg kinect_name2)/rgb/camera_info" />
+	  <remap from="~sensor_2/camera_info" to="/$(arg kinect_name3)/rgb/camera_info" />
+	  <remap from="~sensor_3/camera_info" to="/$(arg philips_name)/camera_info" />
 	  
 	</node>
 
