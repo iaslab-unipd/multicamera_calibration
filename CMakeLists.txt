@@ -75,11 +75,22 @@ add_executable(multicamera_calibration
   src/multicamera_calibration/online_calibration_node.cpp  include/multicamera_calibration/online_calibration_node.h
 )
 
+add_executable(multicamera_simulation
+  src/multicamera_calibration/multicamera_calibration.cpp  include/multicamera_calibration/multicamera_calibration.h
+  src/multicamera_calibration/simulation_node.cpp          include/multicamera_calibration/simulation_node.h
+)
+
 ## Add dependencies to the executable
 
 ## Specify libraries to link a library or executable target against
 
 target_link_libraries(multicamera_calibration
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+
+target_link_libraries(multicamera_simulation
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBS}

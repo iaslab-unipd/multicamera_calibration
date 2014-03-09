@@ -66,7 +66,8 @@ struct SensorNode
 
   SensorNode(const PinholeSensor::Ptr & sensor,
              size_t id)
-    : level_(MAX_LEVEL),
+    : sensor_(sensor),
+      level_(MAX_LEVEL),
       distance_(MAX_DISTANCE),
       min_error_(MAX_ERROR),
       id_(id)
@@ -115,30 +116,38 @@ public:
   {
     PinholeView<Checkerboard>::Ptr color_view;
 
-    SensorNode::Ptr & sensor_node = sensor_map_[sensor];
-
     if (findCheckerboard(image, sensor, color_view))
-      view_vec_.back()[sensor_node] = color_view;
+      addData(sensor, color_view);
 
-    geometry_msgs::TransformStamped transform_msg;
-    if (sensor->toTF(transform_msg))
-      tf_pub_.sendTransform(transform_msg);
+  }
+
+  void addData(const PinholeSensor::Ptr & sensor,
+               const PinholeView<Checkerboard>::Ptr & color_view)
+  {
+    SensorNode::Ptr & sensor_node = sensor_map_[sensor];
+    view_vec_.back()[sensor_node] = color_view;
+
+//    geometry_msgs::TransformStamped transform_msg;
+//    if (sensor->toTF(transform_msg))
+//      tf_pub_.sendTransform(transform_msg);
 
   }
 
   void perform();
 
+  void publish();
+
   void saveTF();
   void saveTF2();
   void saveCameraAndFrames();
+
+  void optimize();
 
 private:
 
   bool findCheckerboard(const cv::Mat & image,
                         const PinholeSensor::Ptr & sensor,
                         typename PinholeView<Checkerboard>::Ptr & color_view);
-
-  void optimize();
 
   ros::NodeHandle node_handle_;
 

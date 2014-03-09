@@ -101,7 +101,7 @@ bool OnlineCalibrationNode::initialize()
     all_messages_received = true;
     for (size_t i = 0; i < sensor_vec_.size(); ++i)
     {
-      if (sensor_vec_[i]->sensor_)
+      if (not sensor_vec_[i]->sensor_)
       {
         ROS_WARN("Not all messages received. Waiting...");
         all_messages_received = false;

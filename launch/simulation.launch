@@ -1,0 +1,52 @@
+<launch>
+
+  <!-- Parameters possible to change-->
+  <arg name="num_sensors"           default="11" />
+  <arg name="distance"              default="2.0" />
+  <arg name="num_samples"           default="220" />
+  
+  <arg name="rows"                  default="6" />
+  <arg name="cols"                  default="5" />
+  <arg name="cell_width"            default="0.12" />
+  <arg name="cell_height"           default="0.12" />
+  
+  <arg name="camera_name"           default="sim_camera" />
+  <arg name="camera_calib_url"      default="file://$(find rgbd_calibration)/conf/$(arg camera_name).yaml" />
+  
+  <arg name="image_error"           default="0.5" />
+  
+  <arg name="min_z"                 default="2.5" />
+  <arg name="max_z"                 default="4.0" />
+  <arg name="delta_z"               default="0.5" />
+  
+  <arg name="results_file"          default="/tmp/results.txt" />
+
+<!-- Openning Rviz for visualization-->
+	<!--node name="rviz" pkg="rviz" type="rviz" args="-d $(env HOME)/.rviz/multikinect.rviz"/-->
+
+<!-- Launching calibration -->
+	<node pkg="multicamera_calibration" type="multicamera_simulation" name="multicamera_simulation" output="screen">
+	
+	  <param name="num_sensors"      value="$(arg num_sensors)" />
+	  <param name="distance"         value="$(arg distance)" />
+	  <param name="num_samples"      value="$(arg num_samples)" />
+	  
+	  <param name="rows"             value="$(arg rows)" />
+      <param name="cols"             value="$(arg cols)" />
+      <param name="cell_width"       value="$(arg cell_width)" />
+      <param name="cell_height"      value="$(arg cell_height)" />
+      
+      <param name="camera_name"      value="$(arg camera_name)" />
+      <param name="camera_calib_url" value="$(arg camera_calib_url)" />
+      
+      <param name="image_error"      value="$(arg image_error)" />
+      
+      <param name="min_z"            value="$(arg min_z)" />
+      <param name="max_z"            value="$(arg max_z)" />
+	  <param name="delta_z"          value="$(arg delta_z)" />
+	  
+	  <param name="results_file"     value="$(arg results_file)" />
+	  
+	</node>
+
+</launch>

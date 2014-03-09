@@ -63,7 +63,7 @@ bool MultiCameraCalibration::findCheckerboard(const cv::Mat & image,
 {
   const SensorNode::Ptr & sensor_node = sensor_map_[sensor];
 
-  Types::Point2Matrix corners(checkerboard_->rows(), checkerboard_->cols());
+  Cloud2 corners(checkerboard_->rows(), checkerboard_->cols());
   finder_.setImage(image);
   if (finder_.find(*checkerboard_, corners))
   {
@@ -97,6 +97,7 @@ void MultiCameraCalibration::perform()
 
   if (initialization_)
   {
+
     if (not world_set_ and not view_map.empty()) // Set /world
     {
       SensorNode::Ptr sensor_node = view_map.begin()->first;
@@ -131,10 +132,9 @@ void MultiCameraCalibration::perform()
           if (sensor_node != min_sensor_node)
           {
             Checkerboard checkerboard(*it->second);
-            double camera_error = std::abs(checkerboard.plane().normal().dot(Types::Vector3::UnitZ()))
-              * checkerboard.center().squaredNorm();
+            double camera_error = std::abs(checkerboard.plane().normal().dot(Vector3::UnitZ())) * checkerboard.center().squaredNorm();
 
-            if (sensor_node->level_ > min_level and camera_error < sensor_node->min_error_)
+            if (sensor_node->level_ > min_level + 1 and camera_error < sensor_node->min_error_)
             {
               Checkerboard min_checkerboard(*view_map.at(min_sensor_node));
 
@@ -153,19 +153,21 @@ void MultiCameraCalibration::perform()
       }
 
       initialization_ = (view_vec_.size() < 20);
-      for (ViewMap::const_iterator it = view_map.begin(); it != view_map.end(); ++it)
+      for (int i = 0; i < sensor_vec_.size(); ++i)
       {
-        SensorNode::Ptr sensor_node = it->first;
+        SensorNode::Ptr & sensor_node = sensor_vec_[i];
         if (sensor_node->level_ == SensorNode::MAX_LEVEL)
         {
           initialization_ = true;
           break;
         }
       }
+
     }
   }
   else
   {
+
     if (view_map.size() < 2)
     {
       view_vec_.resize(view_vec_.size() - 1); // Remove data
@@ -183,6 +185,21 @@ void MultiCameraCalibration::perform()
 
   }
 
+  publish();
+
+}
+
+void MultiCameraCalibration::publish()
+{
+
+  for (size_t i = 0; i < sensor_vec_.size(); ++i)
+  {
+    SensorNode::Ptr sensor_node = sensor_vec_[i];
+    geometry_msgs::TransformStamped transform_msg;
+    if (sensor_node->sensor_->toTF(transform_msg))
+      tf_pub_.sendTransform(transform_msg);
+  }
+
 }
 
 class CheckerboardError
@@ -191,7 +208,7 @@ public:
 
   CheckerboardError(const PinholeCameraModel::ConstPtr & camera_model,
                     const Checkerboard::ConstPtr & checkerboard,
-                    const Types::Point2Matrix & image_corners)
+                    const Cloud2 & image_corners)
     : camera_model_(camera_model),
       checkerboard_(checkerboard),
       image_corners_(image_corners)
@@ -203,16 +220,16 @@ public:
                      T * residuals) const
     {
 
-      typename Types_<T>::Vector3 checkerboard_r_vec(checkerboard_pose[0], checkerboard_pose[1], checkerboard_pose[2]);
-      typename Types_<T>::AngleAxis checkerboard_r(checkerboard_r_vec.norm(), checkerboard_r_vec.normalized());
-      typename Types_<T>::Translation3 checkerboard_t(checkerboard_pose[3], checkerboard_pose[4], checkerboard_pose[5]);
+      typename Types<T>::Vector3 checkerboard_r_vec(checkerboard_pose[0], checkerboard_pose[1], checkerboard_pose[2]);
+      typename Types<T>::AngleAxis checkerboard_r(checkerboard_r_vec.norm(), checkerboard_r_vec.normalized());
+      typename Types<T>::Translation3 checkerboard_t(checkerboard_pose[3], checkerboard_pose[4], checkerboard_pose[5]);
 
-      typename Types_<T>::Transform checkerboard_pose_eigen = checkerboard_t * checkerboard_r;
+      typename Types<T>::Transform checkerboard_pose_eigen = checkerboard_t * checkerboard_r;
 
-      typename Types_<T>::Point3Matrix cb_corners(checkerboard_->cols(), checkerboard_->rows());
+      typename Types<T>::Cloud3 cb_corners(checkerboard_->cols(), checkerboard_->rows());
       cb_corners.matrix() = checkerboard_pose_eigen * checkerboard_->corners().matrix().cast<T>();
 
-      typename Types_<T>::Point2Matrix reprojected_corners = camera_model_->project3dToPixel<T>(cb_corners);
+      typename Types<T>::Cloud2 reprojected_corners = camera_model_->project3dToPixel<T>(cb_corners);
 
       for (size_t i = 0; i < cb_corners.size(); ++i)
         residuals[i] = T((reprojected_corners[i] - image_corners_[i].cast<T>()).norm());
@@ -224,7 +241,7 @@ private:
 
   const PinholeCameraModel::ConstPtr & camera_model_;
   const Checkerboard::ConstPtr & checkerboard_;
-  const Types::Point2Matrix & image_corners_;
+  const Cloud2 & image_corners_;
 
 };
 
@@ -234,7 +251,7 @@ public:
 
   GlobalError(const PinholeCameraModel::ConstPtr & camera_model,
               const Checkerboard::ConstPtr & checkerboard,
-              const Types::Point2Matrix & image_corners)
+              const Cloud2 & image_corners)
     : camera_model_(camera_model),
       checkerboard_(checkerboard),
       image_corners_(image_corners)
@@ -246,26 +263,26 @@ public:
                      const T * const checkerboard_pose,
                      T * residuals) const
     {
-      typename Types_<T>::Vector3 sensor_r_vec(sensor_pose[0], sensor_pose[1], sensor_pose[2]);
-      typename Types_<T>::AngleAxis sensor_r(sensor_r_vec.norm(), sensor_r_vec.normalized());
-      typename Types_<T>::Translation3 sensor_t(sensor_pose[3], sensor_pose[4], sensor_pose[5]);
+      typename Types<T>::Vector3 sensor_r_vec(sensor_pose[0], sensor_pose[1], sensor_pose[2]);
+      typename Types<T>::AngleAxis sensor_r(sensor_r_vec.norm(), sensor_r_vec.normalized());
+      typename Types<T>::Translation3 sensor_t(sensor_pose[3], sensor_pose[4], sensor_pose[5]);
 
-      typename Types_<T>::Transform sensor_pose_eigen = Types_<T>::Transform::Identity() * sensor_t;
+      typename Types<T>::Transform sensor_pose_eigen = Types<T>::Transform::Identity() * sensor_t;
 
       if (sensor_r_vec.norm() != T(0))
         sensor_pose_eigen = sensor_t * sensor_r;
 
-      typename Types_<T>::Vector3 checkerboard_r_vec(checkerboard_pose[0], checkerboard_pose[1], checkerboard_pose[2]);
-      typename Types_<T>::AngleAxis checkerboard_r(checkerboard_r_vec.norm(), checkerboard_r_vec.normalized());
-      typename Types_<T>::Translation3 checkerboard_t(checkerboard_pose[3], checkerboard_pose[4], checkerboard_pose[5]);
+      typename Types<T>::Vector3 checkerboard_r_vec(checkerboard_pose[0], checkerboard_pose[1], checkerboard_pose[2]);
+      typename Types<T>::AngleAxis checkerboard_r(checkerboard_r_vec.norm(), checkerboard_r_vec.normalized());
+      typename Types<T>::Translation3 checkerboard_t(checkerboard_pose[3], checkerboard_pose[4], checkerboard_pose[5]);
 
-      typename Types_<T>::Transform checkerboard_pose_eigen = checkerboard_t * checkerboard_r;
+      typename Types<T>::Transform checkerboard_pose_eigen = checkerboard_t * checkerboard_r;
 
-      typename Types_<T>::Point3Matrix cb_corners(checkerboard_->cols(), checkerboard_->rows());
+      typename Types<T>::Cloud3 cb_corners(checkerboard_->cols(), checkerboard_->rows());
       cb_corners.matrix() = sensor_pose_eigen.inverse() * checkerboard_pose_eigen
                             * checkerboard_->corners().matrix().cast<T>();
 
-      typename Types_<T>::Point2Matrix reprojected_corners = camera_model_->project3dToPixel<T>(cb_corners);
+      typename Types<T>::Cloud2 reprojected_corners = camera_model_->project3dToPixel<T>(cb_corners);
 
       for (size_t i = 0; i < cb_corners.size(); ++i)
         residuals[i] = T((reprojected_corners[i] - image_corners_[i].cast<T>()).norm());
@@ -277,33 +294,44 @@ private:
 
   const PinholeCameraModel::ConstPtr & camera_model_;
   const Checkerboard::ConstPtr & checkerboard_;
-  const Types::Point2Matrix & image_corners_;
+  const Cloud2 & image_corners_;
 
 };
 
 void MultiCameraCalibration::optimize()
 {
 
+  ROS_INFO("Optimizing...");
+
   ceres::Problem problem;
-  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> cb_data(view_vec_.size(), 6);
-  Eigen::Matrix<Types::Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> sensor_data(sensor_vec_.size(),
-                                                                                                  6);
+  Eigen::Matrix<Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> cb_data(view_vec_.size(), 6);
+  Eigen::Matrix<Scalar, Eigen::Dynamic, 6, Eigen::DontAlign | Eigen::RowMajor> sensor_data(sensor_vec_.size(), 6);
+
   for (size_t i = 0; i < sensor_vec_.size(); ++i)
   {
     const SensorNode & sensor_node = *sensor_vec_[i];
-    Types::Pose pose = sensor_node.sensor_->pose();
+    Pose pose = sensor_node.sensor_->pose();
     BaseObject::ConstPtr parent = sensor_node.sensor_->parent();
-    while (parent)
+//    std::cout << i << ": " << parent->frameId() << " " << pose.translation().transpose() << std::endl;
+    while (parent->parent())
     {
-      sensor_node.sensor_->setParent(parent);
       pose = parent->pose() * pose; //TODO controllare
       parent = parent->parent();
+      sensor_node.sensor_->setParent(parent);
+      sensor_node.sensor_->setPose(pose);
+//      std::cout << parent->frameId() << " " << pose.translation().transpose() << std::endl;
     }
 
-    Types::AngleAxis rotation = Types::AngleAxis(pose.linear());
+    AngleAxis rotation = AngleAxis(pose.linear());
     sensor_data.row(i).head<3>() = rotation.angle() * rotation.axis();
     sensor_data.row(i).tail<3>() = pose.translation();
   }
+
+//  ROS_INFO("Before optimization:");
+//  for (size_t i = 0; i < sensor_vec_.size(); ++i)
+//  {
+//    ROS_INFO_STREAM("(" << sensor_vec_[i]->sensor_->parent()->frameId() << ") " << sensor_vec_[i]->sensor_->frameId() << ": " << sensor_data.row(i));
+//  }
 
   for (size_t i = 0; i < view_vec_.size(); ++i)
   {
@@ -311,7 +339,7 @@ void MultiCameraCalibration::optimize()
     ViewMap::iterator it = data_map.begin(); //TODO prendere la migliore e non la prima
     const PinholeView<Checkerboard>::Ptr & view = it->second;
     const SensorNode::Ptr & sensor_node = it->first;
-    Types::Pose pose = sensor_node->sensor_->cameraModel()->estimatePose(view->points(), view->object()->points());
+    Pose pose = sensor_node->sensor_->cameraModel()->estimatePose(view->points(), view->object()->points());
     BaseObject::ConstPtr parent = sensor_node->sensor_;
     while (parent)
     {
@@ -319,7 +347,7 @@ void MultiCameraCalibration::optimize()
       parent = parent->parent();
     }
 
-    Types::AngleAxis rotation = Types::AngleAxis(pose.linear());
+    AngleAxis rotation = AngleAxis(pose.linear());
     cb_data.row(i).head<3>() = rotation.angle() * rotation.axis();
     cb_data.row(i).tail<3>() = pose.translation();
 
@@ -360,22 +388,26 @@ void MultiCameraCalibration::optimize()
 
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
+
+//  ROS_INFO("After optimization:");
   for (size_t i = 0; i < sensor_vec_.size(); ++i)
   {
-    std::cout << i << ": " << sensor_data.row(i) << std::endl;
+//    ROS_INFO_STREAM("(" << sensor_vec_[i]->sensor_->parent()->frameId() << ") " << sensor_vec_[i]->sensor_->frameId() << ": " << sensor_data.row(i));
     SensorNode::Ptr & sensor_node = sensor_vec_[i];
     if (sensor_data.row(i).head<3>().norm() != 0)
     {
-      Types::AngleAxis rotation(sensor_data.row(i).head<3>().norm(), sensor_data.row(i).head<3>().normalized());
-      Types::Translation3 translation(sensor_data.row(i).tail<3>());
+      AngleAxis rotation(sensor_data.row(i).head<3>().norm(), sensor_data.row(i).head<3>().normalized());
+      Translation3 translation(sensor_data.row(i).tail<3>());
       sensor_node->sensor_->setPose(translation * rotation);
     }
     else
     {
-      Types::Translation3 translation(sensor_data.row(i).tail<3>());
-      sensor_node->sensor_->setPose(Types::Pose::Identity() * translation);
+      Translation3 translation(sensor_data.row(i).tail<3>());
+      sensor_node->sensor_->setPose(Pose::Identity() * translation);
     }
   }
+
+//  ROS_INFO("--------------------------------------------------------------------------------");
 }
 
 void MultiCameraCalibration::saveTF2()
@@ -397,9 +429,9 @@ void MultiCameraCalibration::saveTF2()
 
     for (size_t id = 0; id < sensor_vec_.size(); ++id)
     {
-      //const Types::Pose & pose = camera_vector_[id].sensor_->pose();
-      //const Types::Pose& pose = checkerboard_->
-      //Types::Quaternion q(pose.linear());
+      //const Pose & pose = camera_vector_[id].sensor_->pose();
+      //const Pose& pose = checkerboard_->
+      //Quaternion q(pose.linear());
 
       std::stringstream ss, frame;
       ss << id;
@@ -439,11 +471,11 @@ void MultiCameraCalibration::saveTF2()
       transform_final = transform;
 
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
-      << " " << transform_final.getOrigin().y() << " " << transform_final.getOrigin().z() << " "
-      << transform_final.getRotation().x() << " " << transform_final.getRotation().y() << " "
-      << transform_final.getRotation().z() << " " << "checkerboard_" << id << " " << sensor_vec_[id]->sensor_->frameId()
-      << " 100\" />\n\n";
+                  << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\""
+                  << transform_final.getOrigin().x() << " " << transform_final.getOrigin().y() << " "
+                  << transform_final.getOrigin().z() << " " << transform_final.getRotation().x() << " "
+                  << transform_final.getRotation().y() << " " << transform_final.getRotation().z() << " "
+                  << "checkerboard_" << id << " " << sensor_vec_[id]->sensor_->frameId() << " 100\" />\n\n";
 
     }
 
@@ -504,9 +536,9 @@ void MultiCameraCalibration::saveCameraAndFrames()
 
     for (size_t id = 0; id < sensor_vec_.size(); ++id)
     {
-      //const Types::Pose & pose = camera_vector_[id].sensor_->pose();
-      //const Types::Pose& pose = checkerboard_->
-      //Types::Quaternion q(pose.linear());
+      //const Pose & pose = camera_vector_[id].sensor_->pose();
+      //const Pose& pose = checkerboard_->
+      //Quaternion q(pose.linear());
 
       std::stringstream ss;
       ss << id;
@@ -560,9 +592,10 @@ void MultiCameraCalibration::saveCameraAndFrames()
 
       //DICHIARO LA POSIZIONE RELATIVA FRA CAMERA E SCACCHIERA
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << transform_final.getOrigin().x()
-      << " " << transform_final.getOrigin().y() << " " << transform_final.getOrigin().z() << " " << yaw << " " << pitch
-      << " " << roll << " " << "world" << " " << sensor_vec_[id]->sensor_->frameId() << " 100\" />\n\n";
+                  << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster\" args=\""
+                  << transform_final.getOrigin().x() << " " << transform_final.getOrigin().y() << " "
+                  << transform_final.getOrigin().z() << " " << yaw << " " << pitch << " " << roll << " " << "world"
+                  << " " << sensor_vec_[id]->sensor_->frameId() << " 100\" />\n\n";
 
       //CERCO LA POSIZIONE RELATIVA FRA GLI ALBERI: ASUS_FRAME E ASUSX_LINK ( CHE DOVREBBE ESERE ZERO )
       tf_listener_.lookupTransform(sensor_vec_[id]->sensor_->frameId() + (optical_frame_string.str()),
@@ -572,10 +605,10 @@ void MultiCameraCalibration::saveCameraAndFrames()
 
       //DICHIARO LA POSIZIONE RELATIVA FRA
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
-      << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster2\" args=\" -0.045 0 0 "
-      //<< link_transform.getRotation().x() << " " << link_transform.getRotation().y() << " " << link_transform.getRotation().z() << " "
-      << "1.57 -1.57 0 " << sensor_vec_[id]->sensor_->frameId() << " "
-      << sensor_vec_[id]->sensor_->frameId() + link_string.str() << " 100\" />\n\n";
+                  << sensor_vec_[id]->sensor_->frameId().substr(1) << "_broadcaster2\" args=\" -0.045 0 0 "
+                  //<< link_transform.getRotation().x() << " " << link_transform.getRotation().y() << " " << link_transform.getRotation().z() << " "
+                  << "1.57 -1.57 0 " << sensor_vec_[id]->sensor_->frameId() << " "
+                  << sensor_vec_[id]->sensor_->frameId() + link_string.str() << " 100\" />\n\n";
     }
 
     /*
@@ -635,8 +668,8 @@ void MultiCameraCalibration::saveTF()
 
     for (size_t i = 0; i < sensor_vec_.size(); ++i)
     {
-      const Types::Pose & pose = sensor_vec_[i]->sensor_->pose();
-      Types::Quaternion q(pose.linear());
+      const Pose & pose = sensor_vec_[i]->sensor_->pose();
+      Quaternion q(pose.linear());
       launch_file << "<node pkg=\"tf\" type=\"static_transform_publisher\" name=\""
       << sensor_vec_[i]->sensor_->frameId().substr(1) << "_broadcaster\" args=\"" << pose.translation().transpose()
       << " " << q.coeffs().transpose() << " " << sensor_vec_[i]->sensor_->parent()->frameId() << " "
