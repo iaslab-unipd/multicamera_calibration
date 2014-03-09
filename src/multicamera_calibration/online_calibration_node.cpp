@@ -124,10 +124,12 @@ void OnlineCalibrationNode::actionCallback(const std_msgs::String::ConstPtr & ms
 {
   if (msg->data == "save")
   {
+    calibration_->optimize();
     calibration_->saveTF();
   }
   else if (msg->data == "saveCam2WorldPose")
   {
+    calibration_->optimize();
     calibration_->saveCameraAndFrames();
   }
 }
