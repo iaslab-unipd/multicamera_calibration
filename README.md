@@ -2,6 +2,7 @@
 
 ## License ([BSD](http://opensource.org/licenses/BSD-3-Clause "BSD"))
 
+```
 Copyright (c) 2013-2014, Filippo Basso <bassofil@dei.unipd.it>
                          Riccardo Levorato <riccardo.levorato@dei.unipd.it>
 
@@ -28,6 +29,7 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## How To
 
