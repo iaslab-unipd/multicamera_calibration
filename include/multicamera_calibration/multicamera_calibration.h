@@ -1,5 +1,6 @@
 /*
  *  Copyright (c) 2013-2014, Filippo Basso <bassofil@dei.unipd.it>
+ *                           Riccardo Levorato <riccardo.levorato@dei.unipd.it>
  *
  *  All rights reserved.
  *
