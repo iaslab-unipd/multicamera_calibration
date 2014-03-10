@@ -99,6 +99,7 @@ bool OnlineCalibrationNode::initialize()
   ros::Rate rate(1.0);
   while (ros::ok() and not all_messages_received)
   {
+    ros::spinOnce();
     all_messages_received = true;
     for (size_t i = 0; i < sensor_vec_.size(); ++i)
     {
